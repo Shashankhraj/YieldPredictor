@@ -16,7 +16,6 @@ import pandas as pd
 import numpy as np
 from sagemaker import get_execution_role
 from sagemaker.inputs import TrainingInput
-from sagemaker.xgboost.estimator import XGBoost
 
 def generate_synthetic_data(num_samples=10000):
     print("Generating synthetic agricultural data...")
@@ -73,13 +72,41 @@ def generate_synthetic_data(num_samples=10000):
 
 def main():
     # 1. Setup SageMaker session
-    sess = sagemaker.Session()
+    # Try to load credentials from environment (set by .env.local or IAM)
     try:
-        role = get_execution_role()
-    except ValueError:
-        # Fallback if run outside SageMaker Studio without explicitly setting IAM Role
-        iam = boto3.client('iam')
-        role = iam.get_role(RoleName='AmazonSageMaker-ExecutionRole')['Role']['Arn']
+        boto_sess = boto3.Session(
+            region_name=os.getenv('AWS_REGION', 'us-east-1')
+        )
+        sess = sagemaker.Session(boto_session=boto_sess)
+        print(f"Session established in region: {sess.boto_region_name}")
+    except Exception as e:
+        print(f"Error establishing session: {e}")
+        return
+
+    # Handle IAM Role
+    role = os.getenv('AWS_SAGEMAKER_ROLE')
+    if not role:
+        try:
+            role = get_execution_role()
+        except Exception:
+            print("No execution role found. Attempting to find a default SageMaker role...")
+            iam = boto3.client('iam')
+            try:
+                # Try to find a role with 'SageMaker' in the name
+                roles = iam.list_roles()['Roles']
+                for r in roles:
+                    if 'SageMaker' in r['RoleName']:
+                        role = r['Arn']
+                        print(f"Using found role: {role}")
+                        break
+            except Exception as e:
+                print(f"Could not find a SageMaker role: {e}")
+                print("ACTION REQUIRED: Go to IAM Console and create a role for SageMaker, then set it in .env.local as AWS_SAGEMAKER_ROLE")
+                return
+
+    if not role:
+        print("ERROR: No SageMaker IAM role found. Please provide one.")
+        return
         
     bucket = sess.default_bucket()
     prefix = 'crop-yield-predictor'
@@ -103,7 +130,12 @@ def main():
     
     # 3. Setup XGBoost Estimator
     print("Setting up XGBoost Estimator...")
-    container = sagemaker.image_uris.retrieve("xgboost", sess.boto_region_name, "1.7-1")
+    region = os.getenv('AWS_REGION', sess.boto_region_name)
+    try:
+        container = sagemaker.image_uris.retrieve("xgboost", region, "1.7-1")
+    except Exception:
+        # Fallback to a common version if 1.7-1 is not in region
+        container = sagemaker.image_uris.retrieve("xgboost", region, "latest")
     
     xgb = sagemaker.estimator.Estimator(
         image_uri=container,
@@ -141,28 +173,29 @@ def main():
         instance_type='ml.m5.large',
         endpoint_name=endpoint_name
     )
+    
     print(f"\n=======================================================")
     print(f"DEPLOYMENT SUCCESSFUL!")
-    print(f"Your SageMaker Endpoint Name is: {predictor.endpoint_name}")
-    print(f"Your AWS Region is: {sess.boto_region_name}")
+    print(f"Your SageMaker Endpoint Name is: {endpoint_name}")
+    print(f"Your AWS Region is: {region}")
     print(f"=======================================================\n")
     
-    # 6. Setup custom Serializer/Deserializer to accept JSON
-    # This ensures the model accepts the JSON format sent by our Next.js app
-    from sagemaker.serializers import JSONSerializer
-    from sagemaker.deserializers import JSONDeserializer
-    
-    # Since Next.js sends JSON but XGBoost expects CSV by default, 
-    # we need to write a quick Inference function. 
-    # However, to keep it simple, we will test it locally with CSV format first.
-    print("Testing the endpoint locally...")
+    # 6. Test the endpoint
+    print("Testing the endpoint with a sample payload...")
     from sagemaker.serializers import CSVSerializer
     predictor.serializer = CSVSerializer()
     
     # Example: Wheat (0), pH: 6.5, Moist: 65, N: 120, P: 40, K: 180, Temp: 25, Rain: 600, Hum: 70
-    test_payload = "0,6.5,65,120,40,180,25,600,70"
-    result = predictor.predict(test_payload).decode('utf-8')
-    print(f"Test Prediction for Wheat (Optimal Conditions): {result} kg/ha")
+    test_payload = [[0, 6.5, 65, 120, 40, 180, 25, 600, 70]]
+    try:
+        result = predictor.predict(test_payload)
+        if isinstance(result, bytes):
+            result = result.decode('utf-8')
+        print(f"Test Prediction for Wheat (Optimal Conditions): {result} kg/ha")
+    except Exception as e:
+        print(f"Note: Automatic test prediction failed, but endpoint is live. Error: {e}")
     
+    print("\nNext Step: Copy the Endpoint Name above and add it to your AWS Amplify environment variables.")
+
 if __name__ == "__main__":
     main()

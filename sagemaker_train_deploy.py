@@ -75,7 +75,9 @@ def main():
     # Try to load credentials from environment (set by .env.local or IAM)
     try:
         boto_sess = boto3.Session(
-            region_name=os.getenv('AWS_REGION', 'us-east-1')
+            aws_access_key_id=os.getenv('MY_AWS_ACCESS_KEY_ID'),
+            aws_secret_access_key=os.getenv('MY_AWS_SECRET_ACCESS_KEY'),
+            region_name=os.getenv('MY_AWS_REGION', 'us-east-1')
         )
         sess = sagemaker.Session(boto_session=boto_sess)
         print(f"Session established in region: {sess.boto_region_name}")
@@ -84,7 +86,7 @@ def main():
         return
 
     # Handle IAM Role
-    role = os.getenv('AWS_SAGEMAKER_ROLE')
+    role = os.getenv('MY_AWS_SAGEMAKER_ROLE')
     if not role:
         try:
             role = get_execution_role()
@@ -130,7 +132,7 @@ def main():
     
     # 3. Setup XGBoost Estimator
     print("Setting up XGBoost Estimator...")
-    region = os.getenv('AWS_REGION', sess.boto_region_name)
+    region = os.getenv('MY_AWS_REGION', sess.boto_region_name)
     try:
         container = sagemaker.image_uris.retrieve("xgboost", region, "1.7-1")
     except Exception:

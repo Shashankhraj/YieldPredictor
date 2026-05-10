@@ -6,10 +6,13 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
 
     // If AWS endpoint is configured, use SageMaker
-    if (process.env.AWS_SAGEMAKER_ENDPOINT) {
+    if (process.env.MY_AWS_SAGEMAKER_ENDPOINT) {
       const client = new SageMakerRuntimeClient({
-        region: process.env.AWS_REGION || 'us-east-1',
-        // Credentials are automatically loaded from AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
+        region: process.env.MY_AWS_REGION || 'us-east-1',
+        credentials: {
+          accessKeyId: process.env.MY_AWS_ACCESS_KEY_ID || '',
+          secretAccessKey: process.env.MY_AWS_SECRET_ACCESS_KEY || '',
+        },
       })
 
       const { cropType, soilPhLevel, soilMoisture, nitrogen, phosphorus, potassium, temperature, rainfall, humidity } = body;
@@ -20,7 +23,7 @@ export async function POST(request: NextRequest) {
       const csvPayload = `${cropEncoded},${soilPhLevel},${soilMoisture},${nitrogen},${phosphorus},${potassium},${temperature},${rainfall},${humidity}`;
 
       const command = new InvokeEndpointCommand({
-        EndpointName: process.env.AWS_SAGEMAKER_ENDPOINT,
+        EndpointName: process.env.MY_AWS_SAGEMAKER_ENDPOINT,
         Body: Buffer.from(csvPayload),
         ContentType: "text/csv",
         Accept: "text/csv"
